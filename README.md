@@ -16,14 +16,14 @@ This project builds a complete embedded Linux system from scratch for ARM archit
 
 ## Project Structure
 
-\`\`\`
+```bash
 embedded-linux-qemu/
 ├── scripts/         → QEMU boot scripts
 ├── buildroot/       → Buildroot configuration (step 2)
 ├── kernel_module/   → Custom kernel driver (step 3)
 ├── app/             → Userspace C application (step 4)
 └── docs/            → Step by step guide
-\`\`\`
+```
 
 ## Steps
 
@@ -34,9 +34,9 @@ embedded-linux-qemu/
 
 ## Quick Start
 
-\`\`\`bash
+```bash
 ./scripts/run_qemu.sh
-\`\`\`
+```
 
 ## Author
 
