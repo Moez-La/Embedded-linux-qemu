@@ -1,0 +1,3 @@
+scripts/rootfs.img
+scripts/kernel-arm
+scripts/versatile-pb.dtb
