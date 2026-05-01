@@ -2,7 +2,9 @@
 qemu-system-arm \
   -machine versatilepb \
   -kernel scripts/kernel-arm \
+  -dtb scripts/versatile-pb.dtb \
+  -initrd /tmp/initramfs.gz \
   -m 256 \
-  -serial stdio \
-  -append "root=/dev/sda2 panic=1 rootfstype=ext4 rw" \
+  -nographic \
+  -append "root=/dev/ram0 rw console=ttyAMA0 init=/init" \
   -no-reboot
