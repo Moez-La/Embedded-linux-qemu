@@ -1,3 +1,6 @@
 scripts/rootfs.img
 scripts/kernel-arm
 scripts/versatile-pb.dtb
+buildroot/rootfs.ext2
+buildroot/zImage
+buildroot/versatile-pb.dtb
