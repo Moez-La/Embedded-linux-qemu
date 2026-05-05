@@ -11,4 +11,7 @@ kernel_module/*.mod.c
 kernel_module/.*.cmd
 kernel_module/Module.symvers
 kernel_module/modules.order
-app/app
+app/basic_app
+app/benchmark
+app/basic_app
+app/benchmark
