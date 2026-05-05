@@ -1,1 +1,0 @@
-cmd_/home/moez/embedded-linux-qemu/kernel_module/Module.symvers :=  sed 's/ko$$/o/'  /home/moez/embedded-linux-qemu/kernel_module/modules.order | scripts/mod/modpost      -o /home/moez/embedded-linux-qemu/kernel_module/Module.symvers -e -i Module.symvers -T - 
