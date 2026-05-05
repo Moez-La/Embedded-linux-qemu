@@ -565,47 +565,388 @@ dmesg | grep mon_device
 
 ---
 
-# Étape 4 : Application C userspace — (à venir)
+
+# Étape 4 : Applications C userspace
+
+**Résultat : Deux applications C cross-compilées pour ARM communiquant avec le driver kernel**
+
+Deux applications distinctes :
+- **basic_app** : lecture/écriture simple sur `/dev/mon_device` avec mesure de latence
+- **benchmark** : application multi-thread producteur/consommateur avec simulation de capteurs et analyse statistique
 
 ---
 
-# Configuration GitHub
-
-## Créer le .gitignore
+## 1. Créer basic_app.c
 
 ```bash
-cat > ~/embedded-linux-qemu/.gitignore << 'EOF'
-scripts/rootfs.img
-scripts/kernel-arm
-scripts/versatile-pb.dtb
-scripts/initramfs.gz
-buildroot/rootfs.ext2
-buildroot/zImage
-buildroot/versatile-pb.dtb
-kernel_module/*.ko
-kernel_module/*.o
-kernel_module/*.mod
-kernel_module/*.mod.c
-kernel_module/.*.cmd
-kernel_module/Module.symvers
-kernel_module/modules.order
+cd ~/embedded-linux-qemu/app
+```
+
+```bash
+cat > basic_app.c << 'EOF'
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <time.h>
+
+#define DEVICE "/dev/mon_device"
+#define BUFFER_SIZE 1024
+#define NB_ITERATIONS 5
+
+long get_time_ns(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000000000L + ts.tv_nsec;
+}
+
+int main(void)
+{
+    int fd;
+    char write_buf[BUFFER_SIZE];
+    char read_buf[BUFFER_SIZE];
+    long t_start, t_end, latency;
+    int i;
+
+    printf("=== Embedded Linux ARM - Basic Read/Write App ===\n\n");
+
+    for (i = 0; i < NB_ITERATIONS; i++) {
+        snprintf(write_buf, BUFFER_SIZE, "Message %d depuis userspace", i + 1);
+
+        fd = open(DEVICE, O_RDWR);
+        if (fd < 0) { perror("open"); return EXIT_FAILURE; }
+
+        t_start = get_time_ns();
+        if (write(fd, write_buf, strlen(write_buf)) < 0) {
+            perror("write"); close(fd); return EXIT_FAILURE;
+        }
+        t_end = get_time_ns();
+        latency = t_end - t_start;
+        printf("[%d] WRITE : \"%s\"\n", i + 1, write_buf);
+        printf("     Latence write : %ld ns\n", latency);
+        close(fd);
+
+        fd = open(DEVICE, O_RDWR);
+        if (fd < 0) { perror("open"); return EXIT_FAILURE; }
+
+        memset(read_buf, 0, BUFFER_SIZE);
+        t_start = get_time_ns();
+        if (read(fd, read_buf, BUFFER_SIZE) < 0) {
+            perror("read"); close(fd); return EXIT_FAILURE;
+        }
+        t_end = get_time_ns();
+        latency = t_end - t_start;
+        printf("     READ  : \"%s\"\n", read_buf);
+        printf("     Latence read  : %ld ns\n\n", latency);
+        close(fd);
+
+        sleep(1);
+    }
+
+    printf("=== Application terminee ===\n");
+    return EXIT_SUCCESS;
+}
 EOF
 ```
 
-## Initialiser et connecter le repo
+---
+
+## 2. Créer benchmark.c
 
 ```bash
+cat > benchmark.c << 'EOF'
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <time.h>
+#include <pthread.h>
+#include <stdint.h>
+
+#define DEVICE          "/dev/mon_device"
+#define BUFFER_SIZE     1024
+#define NB_ITERATIONS   100
+#define LATENCY_THRESHOLD_US 1000
+
+typedef struct {
+    long min_ns;
+    long max_ns;
+    long total_ns;
+    int  count;
+    int  violations;
+} Stats;
+
+typedef struct {
+    char     message[BUFFER_SIZE];
+    int      ready;
+    pthread_mutex_t mutex;
+    pthread_cond_t  cond_produced;
+    pthread_cond_t  cond_consumed;
+    Stats    write_stats;
+    Stats    read_stats;
+    int      done;
+} SharedData;
+
+static long get_time_ns(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000000000L + ts.tv_nsec;
+}
+
+static void update_stats(Stats *s, long latency_ns)
+{
+    if (s->count == 0 || latency_ns < s->min_ns) s->min_ns = latency_ns;
+    if (latency_ns > s->max_ns) s->max_ns = latency_ns;
+    s->total_ns += latency_ns;
+    s->count++;
+    if (latency_ns > LATENCY_THRESHOLD_US * 1000)
+        s->violations++;
+}
+
+static void print_stats(const char *label, const Stats *s)
+{
+    long avg = s->count ? s->total_ns / s->count : 0;
+    printf("  %-10s | min: %6ld us | max: %6ld us | avg: %6ld us | violations: %d/%d\n",
+           label, s->min_ns/1000, s->max_ns/1000, avg/1000,
+           s->violations, s->count);
+}
+
+static void *producer(void *arg)
+{
+    SharedData *data = (SharedData *)arg;
+    int fd;
+    long t_start, t_end;
+    int i;
+
+    for (i = 0; i < NB_ITERATIONS; i++) {
+        pthread_mutex_lock(&data->mutex);
+        while (data->ready)
+            pthread_cond_wait(&data->cond_consumed, &data->mutex);
+
+        snprintf(data->message, BUFFER_SIZE,
+                 "[%03d] SENSOR_TEMP=%.1f SENSOR_PRESS=%.1f SENSOR_FLOW=%.1f",
+                 i + 1,
+                 20.0 + (rand() % 600) / 10.0,
+                 1.0  + (rand() % 50)  / 10.0,
+                 0.5  + (rand() % 100) / 10.0);
+        pthread_mutex_unlock(&data->mutex);
+
+        fd = open(DEVICE, O_WRONLY);
+        if (fd < 0) { perror("producer open"); break; }
+
+        t_start = get_time_ns();
+        write(fd, data->message, strlen(data->message));
+        t_end = get_time_ns();
+        close(fd);
+
+        update_stats(&data->write_stats, t_end - t_start);
+
+        pthread_mutex_lock(&data->mutex);
+        data->ready = 1;
+        pthread_cond_signal(&data->cond_produced);
+        pthread_mutex_unlock(&data->mutex);
+
+        usleep(10000);
+    }
+
+    pthread_mutex_lock(&data->mutex);
+    data->done = 1;
+    pthread_cond_signal(&data->cond_produced);
+    pthread_mutex_unlock(&data->mutex);
+    return NULL;
+}
+
+static void *consumer(void *arg)
+{
+    SharedData *data = (SharedData *)arg;
+    int fd;
+    char buf[BUFFER_SIZE];
+    long t_start, t_end;
+
+    while (1) {
+        pthread_mutex_lock(&data->mutex);
+        while (!data->ready && !data->done)
+            pthread_cond_wait(&data->cond_produced, &data->mutex);
+
+        if (!data->ready && data->done) {
+            pthread_mutex_unlock(&data->mutex);
+            break;
+        }
+        pthread_mutex_unlock(&data->mutex);
+
+        fd = open(DEVICE, O_RDONLY);
+        if (fd < 0) { perror("consumer open"); break; }
+
+        memset(buf, 0, BUFFER_SIZE);
+        t_start = get_time_ns();
+        read(fd, buf, BUFFER_SIZE);
+        t_end = get_time_ns();
+        close(fd);
+
+        update_stats(&data->read_stats, t_end - t_start);
+        printf("  READ : %s\n", buf);
+
+        pthread_mutex_lock(&data->mutex);
+        data->ready = 0;
+        pthread_cond_signal(&data->cond_consumed);
+        pthread_mutex_unlock(&data->mutex);
+    }
+    return NULL;
+}
+
+int main(void)
+{
+    SharedData data;
+    pthread_t prod_thread, cons_thread;
+
+    memset(&data, 0, sizeof(data));
+    pthread_mutex_init(&data.mutex, NULL);
+    pthread_cond_init(&data.cond_produced, NULL);
+    pthread_cond_init(&data.cond_consumed, NULL);
+    srand(42);
+
+    printf("\n");
+    printf("=================================================\n");
+    printf("   Embedded Linux ARM - Kernel Driver Benchmark  \n");
+    printf("   Device : %s\n", DEVICE);
+    printf("   Iterations : %d\n", NB_ITERATIONS);
+    printf("   Latency threshold : %d us\n", LATENCY_THRESHOLD_US);
+    printf("=================================================\n\n");
+
+    pthread_create(&prod_thread, NULL, producer, &data);
+    pthread_create(&cons_thread, NULL, consumer, &data);
+
+    pthread_join(prod_thread, NULL);
+    pthread_join(cons_thread, NULL);
+
+    printf("\n=== Rapport Final ===\n");
+    print_stats("WRITE", &data.write_stats);
+    print_stats("READ",  &data.read_stats);
+    printf("\n  Total iterations : %d\n", NB_ITERATIONS);
+    printf("  Threshold        : %d us\n", LATENCY_THRESHOLD_US);
+    printf("\n=== Benchmark termine ===\n\n");
+
+    pthread_mutex_destroy(&data.mutex);
+    pthread_cond_destroy(&data.cond_produced);
+    pthread_cond_destroy(&data.cond_consumed);
+    return EXIT_SUCCESS;
+}
+EOF
+```
+
+---
+
+## 3. Créer le Makefile
+
+```bash
+cat > Makefile << 'EOF'
+CC := /tmp/buildroot-2023.11/output/host/bin/arm-buildroot-linux-gnueabi-gcc
+CFLAGS := -Wall -Wextra -O2
+LDFLAGS := -lpthread
+
+all: basic_app benchmark
+
+basic_app: basic_app.c
+	$(CC) $(CFLAGS) -o basic_app basic_app.c
+
+benchmark: benchmark.c
+	$(CC) $(CFLAGS) -o benchmark benchmark.c $(LDFLAGS)
+
+clean:
+	rm -f basic_app benchmark
+EOF
+make
+```
+
+> ⚠️ Utiliser le compilateur Buildroot (`arm-buildroot-linux-gnueabi-`) — sinon erreur de flags incompatibles.
+
+---
+
+## 4. Intégrer dans le rootfs et tester
+
+```bash
+sudo mount -o loop ~/embedded-linux-qemu/buildroot/rootfs.ext2 /mnt/buildroot
+sudo cp ~/embedded-linux-qemu/app/basic_app /mnt/buildroot/root/
+sudo cp ~/embedded-linux-qemu/app/benchmark /mnt/buildroot/root/
+sudo umount /mnt/buildroot
 cd ~/embedded-linux-qemu
-git init
-git remote add origin git@github.com:TON_USERNAME/Embedded-linux-qemu.git
-git config pull.rebase false
-git pull origin main --allow-unrelated-histories
+./scripts/run_buildroot.sh
 ```
 
-## Workflow de commit à chaque étape
+Se connecter avec `root`, puis charger le driver :
 
 ```bash
-git add .
-git commit -m "feat(stepX): description"
-git push
+insmod /root/chardev.ko
+mknod /dev/mon_device c 251 0
 ```
+
+### Tester basic_app
+
+```bash
+/root/basic_app
+```
+
+Résultat attendu :
+```
+=== Embedded Linux ARM - Basic Read/Write App ===
+
+[1] WRITE : "Message 1 depuis userspace"
+     Latence write : 829000 ns
+     READ  : "Message 1 depuis userspace"
+     Latence read  : 903000 ns
+
+[2] WRITE : "Message 2 depuis userspace"
+     Latence write : 319000 ns
+     READ  : "Message 2 depuis userspace"
+     Latence read  : 277000 ns
+...
+=== Application terminee ===
+```
+
+### Tester benchmark
+
+```bash
+/root/benchmark
+```
+
+Résultat attendu :
+```
+=================================================
+   Embedded Linux ARM - Kernel Driver Benchmark
+   Device : /dev/mon_device
+   Iterations : 100
+   Latency threshold : 1000 us
+=================================================
+
+  READ : [001] SENSOR_TEMP=56.6 SENSOR_PRESS=5.0 SENSOR_FLOW=8.6
+  READ : [002] SENSOR_TEMP=64.1 SENSOR_PRESS=2.2 SENSOR_FLOW=6.3
+  ...
+  READ : [100] SENSOR_TEMP=59.2 SENSOR_PRESS=1.9 SENSOR_FLOW=9.5
+
+=== Rapport Final ===
+  WRITE      | min:  389 us | max: 1001 us | avg:  459 us | violations: 1/100
+  READ       | min:  346 us | max:  845 us | avg:  422 us | violations: 0/100
+
+  Total iterations : 100
+  Threshold        : 1000 us
+=== Benchmark termine ===
+```
+
+---
+
+## Résumé de l'étape 4
+
+| Élément | Détail |
+|---|---|
+| basic_app | Read/write simple avec mesure de latence |
+| benchmark | Producteur/consommateur multi-thread |
+| Threads | 2 threads POSIX synchronisés avec mutex + cond |
+| Données | Capteurs simulés (TEMP/PRESS/FLOW) |
+| Itérations | 100 cycles write + read |
+| Write latence moyenne | 459 µs |
+| Read latence moyenne | 422 µs |
+| Violations | 1/100 write, 0/100 read |
