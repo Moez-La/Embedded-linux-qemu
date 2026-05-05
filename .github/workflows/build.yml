@@ -1,0 +1,62 @@
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-kernel-module:
+    name: Build Kernel Module
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install ARM cross-compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-linux-gnueabi make
+
+      - name: Download Linux kernel headers
+        run: |
+          wget -q https://cdn.kernel.org/pub/linux/kernel/v5.x/linux-5.15.tar.xz
+          tar xf linux-5.15.tar.xz
+          cd linux-5.15
+          make ARCH=arm CROSS_COMPILE=arm-linux-gnueabi- versatile_defconfig
+          make ARCH=arm CROSS_COMPILE=arm-linux-gnueabi- prepare modules_prepare -j$(nproc)
+
+      - name: Build kernel module
+        run: |
+          cd kernel_module
+          make KDIR=$GITHUB_WORKSPACE/linux-5.15 \
+               CROSS_COMPILE=arm-linux-gnueabi- \
+               ARCH=arm
+          file chardev.ko
+
+  build-apps:
+    name: Build Userspace Apps
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install ARM cross-compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-linux-gnueabi
+
+      - name: Build basic_app
+        run: |
+          cd app
+          arm-linux-gnueabi-gcc -Wall -Wextra -O2 -o basic_app basic_app.c
+          file basic_app
+
+      - name: Build benchmark
+        run: |
+          cd app
+          arm-linux-gnueabi-gcc -Wall -Wextra -O2 -o benchmark benchmark.c -lpthread
+          file benchmark

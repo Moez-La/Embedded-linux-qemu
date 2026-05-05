@@ -1,5 +1,5 @@
-KDIR := /tmp/buildroot-2023.11/output/build/linux-6.1.44
-CROSS_COMPILE := /tmp/buildroot-2023.11/output/host/bin/arm-buildroot-linux-gnueabi-
+KDIR ?= /tmp/buildroot-2023.11/output/build/linux-6.1.44
+CROSS_COMPILE ?= /tmp/buildroot-2023.11/output/host/bin/arm-buildroot-linux-gnueabi-
 ARCH := arm
 
 obj-m += chardev.o
