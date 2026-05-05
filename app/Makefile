@@ -2,13 +2,13 @@ CC := /tmp/buildroot-2023.11/output/host/bin/arm-buildroot-linux-gnueabi-gcc
 CFLAGS := -Wall -Wextra -O2
 LDFLAGS := -lpthread
 
-TARGET := app
-SRC := app.c
+all: basic_app benchmark
 
-all: $(TARGET)
+basic_app: basic_app.c
+	$(CC) $(CFLAGS) -o basic_app basic_app.c
 
-$(TARGET): $(SRC)
-	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LDFLAGS)
+benchmark: benchmark.c
+	$(CC) $(CFLAGS) -o benchmark benchmark.c $(LDFLAGS)
 
 clean:
-	rm -f $(TARGET)
+	rm -f basic_app benchmark
