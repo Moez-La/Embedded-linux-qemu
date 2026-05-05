@@ -1,5 +1,7 @@
 # Embedded Linux QEMU ARM
 
+[![Build](https://github.com/Moez-La/Embedded-linux-qemu/actions/workflows/build.yml/badge.svg)](https://github.com/Moez-La/Embedded-linux-qemu/actions/workflows/build.yml)
+
 Minimal embedded Linux system built from scratch for ARM architecture, running on QEMU without any physical hardware. This project covers the full embedded Linux stack: kernel compilation, rootfs generation with Buildroot, custom kernel driver, and userspace applications with real-time latency benchmarking.
 
 ---
