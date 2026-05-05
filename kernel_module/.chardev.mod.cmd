@@ -1,0 +1,1 @@
+cmd_/home/moez/embedded-linux-qemu/kernel_module/chardev.mod := printf '%s\n'   chardev.o | awk '!x[$$0]++ { print("/home/moez/embedded-linux-qemu/kernel_module/"$$0) }' > /home/moez/embedded-linux-qemu/kernel_module/chardev.mod
